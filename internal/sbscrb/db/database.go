@@ -1,1 +1,3 @@
-package database
+package db
+
+var DSN string

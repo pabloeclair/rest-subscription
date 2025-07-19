@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,16 +13,19 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pabloeclair/rest-subscription/internal/sbscrb"
+	"github.com/pabloeclair/rest-subscription/internal/sbscrb/db"
+	"github.com/pabloeclair/rest-subscription/internal/sbscrb/rest"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 var (
 	shutdownDuration time.Duration
+	postgresTimeout  time.Duration
 	serverAddr       string
 	isSuccessfulInit bool = false
-	PostgresUser     string
-	PostgresPassword string
-	PostgresDatabase string
-	RedString        = color.New(color.FgRed).SprintFunc()
+	RedString             = color.New(color.FgRed).SprintFunc()
 )
 
 func init() {
@@ -38,19 +42,27 @@ func init() {
 		shutdownDuration = time.Duration(shutdownDurationInt) * time.Second
 	}
 
-	PostgresUser := os.Getenv("POSTGRES_USER")
-	if PostgresUser == "" {
+	postgresUser := os.Getenv("POSTGRES_USER")
+	if postgresUser == "" {
 		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_USER' does not found"))
 	}
 
-	PostgresPassword := os.Getenv("POSTGRES_PASSWORD")
-	if PostgresPassword == "" {
+	postgresPassword := os.Getenv("POSTGRES_PASSWORD")
+	if postgresPassword == "" {
 		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_PASSWORD' does not found"))
 	}
 
-	PostgresDatabase := os.Getenv("POSTGRES_DATABASE")
-	if PostgresDatabase == "" {
+	postgresDatabase := os.Getenv("POSTGRES_DATABASE")
+	if postgresDatabase == "" {
 		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_DATABASE' does not found"))
+	}
+
+	postgresTimeoutString := os.Getenv("SHUTDOWN_DURATION")
+	postgresTimeoutInt, err := strconv.Atoi(postgresTimeoutString)
+	if err != nil || postgresTimeoutInt <= 0 {
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_TIMEOUT' must be a positive number"))
+	} else {
+		postgresTimeout = time.Duration(postgresTimeoutInt) * time.Second
 	}
 
 	if errs != nil {
@@ -59,6 +71,8 @@ func init() {
 	} else {
 		isSuccessfulInit = true
 		serverAddr = os.Args[1]
+		db.DSN = fmt.Sprintf("host=%s user=%s dbname=%s password=%s sslmode=disable",
+			postgresUser, postgresDatabase, postgresPassword, serverAddr)
 	}
 }
 
@@ -68,21 +82,41 @@ func main() {
 		return
 	}
 
+	fmt.Println("Please, wait...")
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	mux := http.NewServeMux()
 
+	// connecton to db
+	<-time.After(postgresTimeout)
+	db, err := gorm.Open(postgres.Open(db.DSN), &gorm.Config{})
+	if err != nil {
+		log.Fatal(RedString("ERROR: connection to postgres: ", err.Error()))
+	}
+
+	db.AutoMigrate(&sbscrb.SubscribeDto{})
+	defer func() {
+		sqlDB, err := db.DB()
+		if err != nil {
+			log.Fatal(err)
+		}
+		sqlDB.Close()
+	}()
+
+	// starting server
+	mux := http.NewServeMux()
 	s := &http.Server{
-		Handler: mux,
+		Handler: rest.LoggingMiddleware(mux),
 		Addr:    serverAddr,
 	}
 
 	go func() {
 		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalln(RedString("ERROR: ", err))
+			log.Fatalln(RedString("ERROR: ", err.Error()))
 		}
 	}()
 
+	// shutting down server
 	log.Printf("Server starting on %s", serverAddr)
 	<-ctx.Done()
 
@@ -91,7 +125,7 @@ func main() {
 	defer cancel()
 
 	if err := s.Shutdown(shutdownCtx); err != nil {
-		log.Fatalln(RedString("ERROR: shutdown: ", err))
+		log.Fatalln(RedString("ERROR: shutdown: ", err.Error()))
 	}
 
 }
