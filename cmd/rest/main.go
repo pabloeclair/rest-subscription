@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pabloeclair/rest-subscription/internal/format"
+	"github.com/fatih/color"
 )
 
 var (
@@ -22,6 +21,7 @@ var (
 	PostgresUser     string
 	PostgresPassword string
 	PostgresDatabase string
+	RedString        = color.New(color.FgRed).SprintFunc()
 )
 
 func init() {
@@ -54,7 +54,7 @@ func init() {
 	}
 
 	if errs != nil {
-		fmt.Println(format.ERROR.Render(errs.Error()))
+		color.Red(errs.Error())
 		return
 	} else {
 		isSuccessfulInit = true
@@ -79,7 +79,7 @@ func main() {
 
 	go func() {
 		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalln(format.ERROR.Render(fmt.Sprintf("ERROR: %v", err)))
+			log.Fatalln(RedString("ERROR: ", err))
 		}
 	}()
 
@@ -91,7 +91,7 @@ func main() {
 	defer cancel()
 
 	if err := s.Shutdown(shutdownCtx); err != nil {
-		log.Fatalln(format.ERROR.Render(fmt.Sprintf("ERROR: shutdown: %v", err)))
+		log.Fatalln(RedString("ERROR: shutdown: ", err))
 	}
 
 }
