@@ -2,11 +2,15 @@ package sbscrb
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
+	"github.com/fatih/color"
 	"gorm.io/gorm"
 )
+
+var RedString = color.New(color.FgRed).SprintFunc()
 
 type SubscribeDto struct {
 	gorm.Model
@@ -23,29 +27,28 @@ type ExceptionDto struct {
 	ErrorMessage string `json:"error_message"`
 }
 
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	StatusCode    int
-	StatusMessage string
+type FullExceptionDto struct {
+	ExceptionDto
+	FullErrorMessage string `json:"full_error_message"`
 }
 
-func NewLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
-	return &loggingResponseWriter{w, http.StatusOK, "OK"}
-}
-
-func (lrw *loggingResponseWriter) WriteHeader(code int) {
-	lrw.StatusCode = code
-	lrw.StatusMessage = http.StatusText(code)
-	lrw.ResponseWriter.WriteHeader(code)
-}
-
-func (lrw *loggingResponseWriter) Write(b []byte) (int, error) {
-	var errDto ExceptionDto
-	if err := json.Unmarshal(b, &errDto); err != nil {
-		return 0, err
+func NewFullExceptionDto(status int, msg string, err string) FullExceptionDto {
+	return FullExceptionDto{
+		ExceptionDto: ExceptionDto{
+			StatusCode:   status,
+			ErrorMessage: msg,
+		},
+		FullErrorMessage: err,
 	}
-	if errDto.ErrorMessage != "" {
-		lrw.StatusMessage += ": " + errDto.ErrorMessage
+}
+
+func (errDto *FullExceptionDto) Write(w http.ResponseWriter) {
+	b, err := json.Marshal(errDto)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		log.Println(RedString("ERROR: json marshal: ExceptionDto ", errDto))
+		return
 	}
-	return lrw.ResponseWriter.Write(b)
+	w.WriteHeader(errDto.StatusCode)
+	w.Write(b)
 }
