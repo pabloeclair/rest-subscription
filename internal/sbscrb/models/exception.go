@@ -1,26 +1,14 @@
-package sbscrb
+package models
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/fatih/color"
-	"gorm.io/gorm"
 )
 
 var RedString = color.New(color.FgRed).SprintFunc()
-
-type SubscribeDto struct {
-	gorm.Model
-	Id          uint      `gorm:"primaryKey" json:"id"`
-	ServiceName string    `gorm:"size:255;not null;default:null" json:"service_name"`
-	Price       int       `gorm:"not null;default:null" json:"price"`
-	UserId      string    `gorm:"not null;default:null" json:"user_id"`
-	StartDate   time.Time `gorm:"not null;default:null" json:"start_date"`
-	EndDate     time.Time `json:"end_date"`
-}
 
 type ExceptionDto struct {
 	StatusCode   int    `json:"status_code"`
