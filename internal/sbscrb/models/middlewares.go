@@ -5,6 +5,8 @@ import (
 	"net/http"
 )
 
+var NotificationInternalError string
+
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	StatusCode    int
@@ -29,7 +31,12 @@ func (lrw *loggingResponseWriter) Write(b []byte) (int, error) {
 	if errDto.ErrorMessage != "" {
 		lrw.StatusMessage += ": " + errDto.ErrorMessage + ": " + errDto.FullErrorMessage
 	}
+
 	errDto.FullErrorMessage = ""
+	if errDto.StatusCode == http.StatusInternalServerError {
+		errDto.ErrorMessage += ". " + NotificationInternalError
+	}
+
 	b, err := json.Marshal(&errDto)
 	if err != nil {
 		return 0, err
