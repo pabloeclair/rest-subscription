@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -90,11 +91,19 @@ func Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := db.First(&subscribeDto, idInt)
-	if res.Error != nil {
+	if errors.Is(res.Error, gorm.ErrRecordNotFound) {
 		errDto = models.NewFullExceptionDto(
 			http.StatusNotFound,
 			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
 			"",
+		)
+		errDto.Write(w)
+		return
+	} else if res.Error != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			fmt.Sprintf("Failed to get the subscribe with id = %d", idInt),
+			res.Error.Error(),
 		)
 		errDto.Write(w)
 		return
@@ -133,25 +142,36 @@ func List(w http.ResponseWriter, r *http.Request) {
 	if (sort == "" && value != "") || (sort != "" && value == "") {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
-			"You should fill in both parameters - 'sort' and 'value'",
+			"The 'sort' or 'value' parameters are missing. Please fill in both parameters",
 			"",
 		)
 		errDto.Write(w)
 		return
 	}
 
+	var res *gorm.DB
 	switch sort {
 	case "":
-		db.Find(&subscribes)
+		res = db.Find(&subscribes)
 	case "USER_ID":
-		db.Where(&models.SubscribeDto{UserId: value}).Find(&subscribes)
+		res = db.Where(&models.SubscribeDto{UserId: value}).Find(&subscribes)
 	case "SERVICE_NAME":
-		db.Where(&models.SubscribeDto{ServiceName: value}).Find(&subscribes)
+		res = db.Where(&models.SubscribeDto{ServiceName: value}).Find(&subscribes)
 	default:
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
-			"The sort parameter can only be empty or have the values SERVICE_NAME and USER_ID",
+			"Incorrect the 'sort' parameter. The 'sort' can only be empty or have the values 'SERVICE_NAME' and 'USER_ID'",
 			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			"Failed to get the subscribe list",
+			res.Error.Error(),
 		)
 		errDto.Write(w)
 		return
@@ -167,4 +187,50 @@ func List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(b)
+}
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+
+	var (
+		subscribeDto models.SubscribeDto
+		errDto       models.FullExceptionDto
+	)
+
+	idStr := r.PathValue("id")
+	idInt, err := strconv.Atoi(idStr)
+	if err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"Incorrect id in the URL path. Please specify a positive number",
+			err.Error(),
+		)
+		errDto.Write(w)
+		return
+	}
+
+	db, err := connectToDB(w)
+	if err != nil {
+		return
+	}
+
+	res := db.Delete(&subscribeDto, idInt)
+	if res.Error != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			fmt.Sprintf("Failed to delete the subscribe with id = %d", idInt),
+			res.Error.Error(),
+		)
+		errDto.Write(w)
+		return
+	} else if res.RowsAffected == 0 {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
