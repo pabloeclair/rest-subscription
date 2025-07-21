@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/pabloeclair/rest-subscription/internal/sbscrb/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 var DSN string
 
 func connectToDB(w http.ResponseWriter) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{Logger: logger.Default})
+	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
 	if err != nil {
 		errDto := models.NewFullExceptionDto(
 			http.StatusInternalServerError,
@@ -65,7 +65,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func GetById(w http.ResponseWriter, r *http.Request) {
+func Get(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		subscribeDto models.SubscribeDto
@@ -109,6 +109,61 @@ func GetById(w http.ResponseWriter, r *http.Request) {
 		)
 		errDto.Write(w)
 		return
+	}
+
+	w.Write(b)
+}
+
+func List(w http.ResponseWriter, r *http.Request) {
+
+	var (
+		subscribes []models.SubscribeDto
+		errDto     models.FullExceptionDto
+	)
+
+	db, err := connectToDB(w)
+	if err != nil {
+		return
+	}
+
+	queryParams := r.URL.Query()
+	sort := strings.ToUpper(queryParams.Get("sort"))
+	value := queryParams.Get("value")
+
+	if (sort == "" && value != "") || (sort != "" && value == "") {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"You should fill in both parameters - 'sort' and 'value'",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	switch sort {
+	case "":
+		db.Find(&subscribes)
+	case "USER_ID":
+		db.Where(&models.SubscribeDto{UserId: value}).Find(&subscribes)
+	case "SERVICE_NAME":
+		db.Where(&models.SubscribeDto{ServiceName: value}).Find(&subscribes)
+	default:
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The sort parameter can only be empty or have the values SERVICE_NAME and USER_ID",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	b, err := json.Marshal(&subscribes)
+	if err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			"Failed to marshal response",
+			"",
+		)
 	}
 
 	w.Write(b)
