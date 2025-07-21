@@ -24,16 +24,19 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 }
 
 func (lrw *loggingResponseWriter) Write(b []byte) (int, error) {
-	var errDto FullExceptionDto
-	if err := json.Unmarshal(b, &errDto); err != nil {
+	var errFullDto FullExceptionDto
+	if err := json.Unmarshal(b, &errFullDto); err != nil {
 		return 0, err
 	}
-	if errDto.ErrorMessage != "" {
-		lrw.StatusMessage += ": " + errDto.ErrorMessage + ": " + errDto.FullErrorMessage
+	if errFullDto.ErrorMessage != "" {
+		lrw.StatusMessage += ": " + errFullDto.ErrorMessage + ": " + errFullDto.FullErrorMessage
 	}
 
-	errDto.FullErrorMessage = ""
-	if errDto.StatusCode == http.StatusInternalServerError {
+	errDto := ExceptionDto{
+		StatusCode:   errFullDto.StatusCode,
+		ErrorMessage: errFullDto.ErrorMessage,
+	}
+	if errFullDto.StatusCode == http.StatusInternalServerError {
 		errDto.ErrorMessage += ". " + NotificationInternalError
 	}
 
