@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/pabloeclair/rest-subscription/internal/sbscrb"
-	"github.com/pabloeclair/rest-subscription/internal/sbscrb/db"
+	_ "github.com/joho/godotenv/autoload"
+	"github.com/pabloeclair/rest-subscription/internal/sbscrb/models"
 	"github.com/pabloeclair/rest-subscription/internal/sbscrb/rest"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -25,7 +25,6 @@ var (
 	postgresTimeout  time.Duration
 	serverAddr       string
 	isSuccessfulInit bool = false
-	RedString             = color.New(color.FgRed).SprintFunc()
 )
 
 func init() {
@@ -37,32 +36,39 @@ func init() {
 	shutdownDurationString := os.Getenv("SHUTDOWN_DURATION")
 	shutdownDurationInt, err := strconv.Atoi(shutdownDurationString)
 	if err != nil || shutdownDurationInt <= 0 {
-		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'SERVER_SHUTDOWN' must be a positive number"))
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'SHUTDOWN_DURATION' must be a positive number"))
 	} else {
 		shutdownDuration = time.Duration(shutdownDurationInt) * time.Second
 	}
 
 	postgresUser := os.Getenv("POSTGRES_USER")
 	if postgresUser == "" {
-		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_USER' does not found"))
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_USER' is not found"))
 	}
 
 	postgresPassword := os.Getenv("POSTGRES_PASSWORD")
 	if postgresPassword == "" {
-		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_PASSWORD' does not found"))
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_PASSWORD' is not found"))
 	}
 
 	postgresDatabase := os.Getenv("POSTGRES_DATABASE")
 	if postgresDatabase == "" {
-		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_DATABASE' does not found"))
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_DATABASE' is not found"))
 	}
 
-	postgresTimeoutString := os.Getenv("SHUTDOWN_DURATION")
+	postgresTimeoutString := os.Getenv("POSTGRES_TIMEOUT")
 	postgresTimeoutInt, err := strconv.Atoi(postgresTimeoutString)
 	if err != nil || postgresTimeoutInt <= 0 {
 		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_TIMEOUT' must be a positive number"))
 	} else {
 		postgresTimeout = time.Duration(postgresTimeoutInt) * time.Second
+	}
+
+	models.NotificationInternalError = os.Getenv("NOTIFICATION_INTERNAL_ERROR")
+	if models.NotificationInternalError == "" {
+		color.Yellow("WARN: the environment variable 'NOTIFICATION_INTERNAL_ERROR' is not found. " +
+			"This variable is optional, but you may want to send an extra notification when catching INTERNAL SERVER ERROR " +
+			"(e.g., 'Please notify the administrator.')")
 	}
 
 	if errs != nil {
@@ -71,8 +77,8 @@ func init() {
 	} else {
 		isSuccessfulInit = true
 		serverAddr = os.Args[1]
-		db.DSN = fmt.Sprintf("host=%s user=%s dbname=%s password=%s sslmode=disable",
-			postgresUser, postgresDatabase, postgresPassword, serverAddr)
+		rest.DSN = fmt.Sprintf("host=localhost port=5432 user=%s dbname=%s password=%s sslmode=disable",
+			postgresUser, postgresDatabase, postgresPassword)
 	}
 }
 
@@ -89,22 +95,29 @@ func main() {
 
 	// connecton to db
 	<-time.After(postgresTimeout)
-	db, err := gorm.Open(postgres.Open(db.DSN), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(rest.DSN), &gorm.Config{})
 	if err != nil {
-		log.Fatal(RedString("ERROR: connection to postgres: ", err.Error()))
+		return
 	}
 
-	db.AutoMigrate(&sbscrb.SubscribeDto{})
+	db.AutoMigrate(&models.SubscribeDto{})
 	defer func() {
 		sqlDB, err := db.DB()
 		if err != nil {
-			log.Fatal(err)
+			return
 		}
 		sqlDB.Close()
 	}()
 
 	// starting server
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/subscribes", rest.Create)
+	mux.HandleFunc("GET /api/v1/subscribes/{id}", rest.Get)
+	mux.HandleFunc("GET /api/v1/subscribe", rest.List)
+	mux.HandleFunc("PUT /api/v1/subscribes/{id}", rest.Update)
+	mux.HandleFunc("PATCH /api/v1/subscribes/{id}", rest.Update)
+	mux.HandleFunc("DELETE /api/v1/subscribes/{id}", rest.Delete)
+
 	s := &http.Server{
 		Handler: rest.LoggingMiddleware(mux),
 		Addr:    serverAddr,
@@ -112,7 +125,7 @@ func main() {
 
 	go func() {
 		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalln(RedString("ERROR: ", err.Error()))
+			log.Fatalln(models.RedString("ERROR: ", err.Error()))
 		}
 	}()
 
@@ -125,7 +138,7 @@ func main() {
 	defer cancel()
 
 	if err := s.Shutdown(shutdownCtx); err != nil {
-		log.Fatalln(RedString("ERROR: shutdown: ", err.Error()))
+		log.Fatal(models.RedString("ERROR: shutdown: ", err.Error()))
 	}
 
 }
