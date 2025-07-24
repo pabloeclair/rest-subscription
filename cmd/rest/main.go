@@ -51,9 +51,14 @@ func init() {
 		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_PASSWORD' is not found"))
 	}
 
-	postgresDatabase := os.Getenv("POSTGRES_DATABASE")
+	postgresDatabase := os.Getenv("POSTGRES_DB")
 	if postgresDatabase == "" {
-		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_DATABASE' is not found"))
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_DB' is not found"))
+	}
+
+	postgresHost := os.Getenv("POSTGRES_HOST")
+	if postgresHost == "" {
+		errs = errors.Join(errs, errors.New("ERROR: the environment variable 'POSTGRES_HOST' is not found"))
 	}
 
 	postgresTimeoutString := os.Getenv("POSTGRES_TIMEOUT")
@@ -77,8 +82,8 @@ func init() {
 	} else {
 		isSuccessfulInit = true
 		serverAddr = os.Args[1]
-		rest.DSN = fmt.Sprintf("host=localhost port=5432 user=%s dbname=%s password=%s sslmode=disable",
-			postgresUser, postgresDatabase, postgresPassword)
+		rest.DSN = fmt.Sprintf("host=%s port=5432 user=%s dbname=%s password=%s sslmode=disable",
+			postgresHost, postgresUser, postgresDatabase, postgresPassword)
 	}
 }
 
