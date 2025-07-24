@@ -36,6 +36,16 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		errDto       models.FullExceptionDto
 	)
 
+	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The request body must be in JSON format",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
 	db, err := connectToDB(w)
 	if err != nil {
 		return
@@ -85,6 +95,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+	w.Header().Del("Content-Type")
 }
 
 func Get(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +231,16 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		errDto       models.FullExceptionDto
 	)
 
+	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The request body must be in JSON format",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
 	idStr := r.PathValue("id")
 	idInt, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -319,6 +340,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+	w.Header().Del("Content-Type")
 
 }
 
@@ -366,4 +388,5 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+	w.Header().Del("Content-Type")
 }
