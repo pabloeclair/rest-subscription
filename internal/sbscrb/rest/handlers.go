@@ -192,7 +192,9 @@ func List(w http.ResponseWriter, r *http.Request) {
 func Update(w http.ResponseWriter, r *http.Request) {
 
 	var (
-		subscribeDb  models.SubscribeDto
+		//the subscribe from db
+		subscribeDb models.SubscribeDto
+		//the subscribe from request
 		subscribeDto models.SubscribeDto
 		errDto       models.FullExceptionDto
 	)
@@ -244,20 +246,44 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if subscribeDto.ServiceName == "" {
-		subscribeDto.ServiceName = subscribeDb.ServiceName
+	// validating fields when the method is a patch
+	if r.Method == http.MethodPatch {
+		if subscribeDto.ServiceName == "" {
+			subscribeDto.ServiceName = subscribeDb.ServiceName
+		}
+		if subscribeDto.Price == nil {
+			subscribeDto.Price = subscribeDb.Price
+		}
+		if subscribeDto.UserId == "" {
+			subscribeDto.UserId = subscribeDb.UserId
+		}
+		if subscribeDto.StartDate.IsZero() {
+			subscribeDto.StartDate = subscribeDb.StartDate
+		}
+		if subscribeDto.EndDate == nil {
+			subscribeDto.EndDate = subscribeDb.EndDate
+		}
+	} else {
+		// validating fields when the method is a put
+		if subscribeDto.ServiceName == "" || subscribeDto.Price == nil || subscribeDto.UserId == "" || subscribeDto.StartDate.IsZero() {
+			errDto = models.NewFullExceptionDto(
+				http.StatusBadRequest,
+				"The fields 'service_name', 'price', 'user_id' and 'start_date' are required.",
+				"",
+			)
+			errDto.Write(w)
+			return
+		}
 	}
-	if subscribeDto.Price == 0 {
-		subscribeDto.Price = subscribeDb.Price
-	}
-	if subscribeDto.UserId == "" {
-		subscribeDto.UserId = subscribeDb.UserId
-	}
-	if subscribeDto.StartDate.IsZero() {
-		subscribeDto.StartDate = subscribeDb.StartDate
-	}
-	if subscribeDto.EndDate == nil {
-		subscribeDto.EndDate = subscribeDb.EndDate
+
+	if subscribeDto.EndDate != nil && subscribeDto.StartDate.After(*subscribeDto.EndDate) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The field 'end_time' should be after the 'start_time'",
+			"",
+		)
+		errDto.Write(w)
+		return
 	}
 
 	res = db.Model(&subscribeDb).Updates(&subscribeDto)
