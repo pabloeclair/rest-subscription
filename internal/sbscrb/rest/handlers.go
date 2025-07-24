@@ -52,6 +52,27 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// validation
+	if subscribeDto.ServiceName == "" || subscribeDto.Price == nil || subscribeDto.UserId == "" || subscribeDto.StartDate.IsZero() {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The fields 'service_name', 'price', 'user_id' and 'start_date' are required",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	if subscribeDto.EndDate != nil && subscribeDto.StartDate.After(*subscribeDto.EndDate) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The field 'end_time' should be after the 'start_time'",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
 	res := db.Create(&subscribeDto)
 	if res.Error != nil {
 		errDto = models.NewFullExceptionDto(
