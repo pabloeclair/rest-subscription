@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/pabloeclair/rest-subscription/internal/sbscrb/models"
+	"github.com/pabloeclair/rest-subscription/internal/sbscrb/repositories"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 var DSN string
 
-func connectToDB(w http.ResponseWriter) (*gorm.DB, error) {
+func connectToDB(w http.ResponseWriter) (*repositories.GormSubscribeRepository, error) {
 	db, err := gorm.Open(postgres.Open(DSN), &gorm.Config{})
 	if err != nil {
 		errDto := models.NewFullExceptionDto(
@@ -26,16 +27,19 @@ func connectToDB(w http.ResponseWriter) (*gorm.DB, error) {
 		errDto.Write(w)
 		return nil, err
 	}
-	return db, nil
+	repo := repositories.GormSubscribeRepository{Db: db}
+	return &repo, nil
 }
 
 func Create(w http.ResponseWriter, r *http.Request) {
-
 	var (
+		//the subscribe from request
 		subscribeDto models.SubscribeDto
-		errDto       models.FullExceptionDto
+		//the error for response
+		errDto models.FullExceptionDto
 	)
 
+	// headers validation
 	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
@@ -43,11 +47,6 @@ func Create(w http.ResponseWriter, r *http.Request) {
 			"",
 		)
 		errDto.Write(w)
-		return
-	}
-
-	db, err := connectToDB(w)
-	if err != nil {
 		return
 	}
 
@@ -62,49 +61,48 @@ func Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// validation
-	if subscribeDto.ServiceName == "" || subscribeDto.Price == nil || subscribeDto.UserId == "" || subscribeDto.StartDate.IsZero() {
+	// body validation
+	if err := subscribeDto.Validate(); err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
-			"The fields 'service_name', 'price', 'user_id' and 'start_date' are required",
+			err.Error(),
 			"",
 		)
 		errDto.Write(w)
 		return
 	}
 
-	if subscribeDto.EndDate != nil && subscribeDto.StartDate.After(*subscribeDto.EndDate) {
-		errDto = models.NewFullExceptionDto(
-			http.StatusBadRequest,
-			"The field 'end_time' should be after the 'start_time'",
-			"",
-		)
-		errDto.Write(w)
+	repo, err := connectToDB(w)
+	if err != nil {
 		return
 	}
 
-	res := db.Create(&subscribeDto)
-	if res.Error != nil {
+	// create operation
+	err = repo.Create(subscribeDto.ToDatabase())
+	if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
-			"Failed to create subscribe",
-			res.Error.Error(),
+			"Failed to create the subscribe",
+			err.Error(),
 		)
 		errDto.Write(w)
 		return
 	}
 
+	// result
 	w.WriteHeader(http.StatusCreated)
 	w.Header().Del("Content-Type")
 }
 
-func Get(w http.ResponseWriter, r *http.Request) {
-
+func GetById(w http.ResponseWriter, r *http.Request) {
 	var (
-		subscribeDto models.SubscribeDto
-		errDto       models.FullExceptionDto
+		//the subscribe from db
+		subscribeDb *models.Subscribe
+		//the error for response
+		errDto models.FullExceptionDto
 	)
 
+	// query validate
 	idStr := r.PathValue("id")
 	idInt, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -117,31 +115,35 @@ func Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := connectToDB(w)
+	repo, err := connectToDB(w)
 	if err != nil {
 		return
 	}
 
-	res := db.First(&subscribeDto, idInt)
-	if errors.Is(res.Error, gorm.ErrRecordNotFound) {
-		errDto = models.NewFullExceptionDto(
-			http.StatusNotFound,
-			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
-			"",
-		)
-		errDto.Write(w)
-		return
-	} else if res.Error != nil {
-		errDto = models.NewFullExceptionDto(
-			http.StatusInternalServerError,
-			fmt.Sprintf("Failed to get the subscribe with id = %d", idInt),
-			res.Error.Error(),
-		)
-		errDto.Write(w)
-		return
+	// find operation
+	subscribeDb, err = repo.FindByID(uint(idInt))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			errDto = models.NewFullExceptionDto(
+				http.StatusNotFound,
+				fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+				err.Error(),
+			)
+			errDto.Write(w)
+			return
+		} else {
+			errDto = models.NewFullExceptionDto(
+				http.StatusInternalServerError,
+				fmt.Sprintf("Failed to get the subscribe with id = %d", idInt),
+				err.Error(),
+			)
+			errDto.Write(w)
+			return
+		}
 	}
 
-	b, err := json.Marshal(&subscribeDto)
+	// result
+	b, err := json.Marshal(subscribeDb.ToDto())
 	if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
@@ -155,22 +157,21 @@ func Get(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-func List(w http.ResponseWriter, r *http.Request) {
-
+func GetList(w http.ResponseWriter, r *http.Request) {
 	var (
-		subscribes []models.SubscribeDto
-		errDto     models.FullExceptionDto
+		//the subscribes from db
+		subscribes []*models.Subscribe
+		//the subscribes for response
+		subscribesDto []*models.SubscribeDto
+		//the error for response
+		errDto models.FullExceptionDto
 	)
-
-	db, err := connectToDB(w)
-	if err != nil {
-		return
-	}
 
 	queryParams := r.URL.Query()
 	sort := strings.ToUpper(queryParams.Get("sort"))
 	value := queryParams.Get("value")
 
+	// query validate
 	if (sort == "" && value != "") || (sort != "" && value == "") {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
@@ -181,14 +182,19 @@ func List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var res *gorm.DB
+	repo, err := connectToDB(w)
+	if err != nil {
+		return
+	}
+
+	// find operation
 	switch sort {
 	case "":
-		res = db.Find(&subscribes)
+		subscribes, err = repo.FindAll()
 	case "USER_ID":
-		res = db.Where(&models.SubscribeDto{UserId: value}).Find(&subscribes)
+		subscribes, err = repo.FindByUserId(value)
 	case "SERVICE_NAME":
-		res = db.Where(&models.SubscribeDto{ServiceName: value}).Find(&subscribes)
+		subscribes, err = repo.FindByServiceName(value)
 	default:
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
@@ -199,17 +205,22 @@ func List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
+	if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
 			"Failed to get the subscribe list",
-			res.Error.Error(),
+			err.Error(),
 		)
 		errDto.Write(w)
 		return
 	}
 
-	b, err := json.Marshal(&subscribes)
+	// result
+	for _, v := range subscribes {
+		subscribesDto = append(subscribesDto, v.ToDto())
+	}
+
+	b, err := json.Marshal(&subscribesDto)
 	if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
@@ -221,16 +232,18 @@ func List(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-func Update(w http.ResponseWriter, r *http.Request) {
+func UpdatePatch(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		//the subscribe from db
-		subscribeDb models.SubscribeDto
+		subscribeDb *models.Subscribe
 		//the subscribe from request
-		subscribeDto models.SubscribeDto
-		errDto       models.FullExceptionDto
+		subscribeDto *models.SubscribeDto
+		//the error for response
+		errDto models.FullExceptionDto
 	)
 
+	// headers validate
 	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
@@ -241,6 +254,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// query validate
 	idStr := r.PathValue("id")
 	idInt, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -253,6 +267,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// body unmarshal
 	d := json.NewDecoder(r.Body)
 	if err := d.Decode(&subscribeDto); err != nil {
 		errDto = models.NewFullExceptionDto(
@@ -264,13 +279,25 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := connectToDB(w)
+	// fields validate
+	if err = subscribeDto.ValidateTime(); err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			err.Error(),
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	// preparing fields
+	repo, err := connectToDB(w)
 	if err != nil {
 		return
 	}
 
-	res := db.First(&subscribeDb, idInt)
-	if errors.Is(res.Error, gorm.ErrRecordNotFound) {
+	subscribeDb, err = repo.FindByID(uint(idInt))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		errDto = models.NewFullExceptionDto(
 			http.StatusNotFound,
 			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
@@ -278,46 +305,31 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		)
 		errDto.Write(w)
 		return
-	} else if res.Error != nil {
+	} else if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
 			fmt.Sprintf("Failed to get the subscribe with id = %d", idInt),
-			res.Error.Error(),
+			err.Error(),
 		)
 		errDto.Write(w)
 		return
 	}
 
-	// validating fields when the method is a patch
-	if r.Method == http.MethodPatch {
-		if subscribeDto.ServiceName == "" {
-			subscribeDto.ServiceName = subscribeDb.ServiceName
-		}
-		if subscribeDto.Price == nil {
-			subscribeDto.Price = subscribeDb.Price
-		}
-		if subscribeDto.UserId == "" {
-			subscribeDto.UserId = subscribeDb.UserId
-		}
-		if subscribeDto.StartDate.IsZero() {
-			subscribeDto.StartDate = subscribeDb.StartDate
-		}
-		if subscribeDto.EndDate == nil {
-			subscribeDto.EndDate = subscribeDb.EndDate
-		}
-	} else {
-		// validating fields when the method is a put
-		if subscribeDto.ServiceName == "" || subscribeDto.Price == nil || subscribeDto.UserId == "" || subscribeDto.StartDate.IsZero() {
-			errDto = models.NewFullExceptionDto(
-				http.StatusBadRequest,
-				"The fields 'service_name', 'price', 'user_id' and 'start_date' are required.",
-				"",
-			)
-			errDto.Write(w)
-			return
-		}
+	if subscribeDto.ServiceName != "" {
+		subscribeDb.ServiceName = subscribeDto.ServiceName
 	}
-
+	if subscribeDto.Price != nil {
+		subscribeDb.Price = *subscribeDto.Price
+	}
+	if subscribeDto.UserId != "" {
+		subscribeDb.UserId = subscribeDto.UserId
+	}
+	if !subscribeDto.StartDate.IsZero() {
+		subscribeDb.StartDate = subscribeDto.StartDate
+	}
+	if subscribeDto.EndDate != nil {
+		subscribeDb.EndDate = subscribeDto.EndDate
+	}
 	if subscribeDto.EndDate != nil && subscribeDto.StartDate.After(*subscribeDto.EndDate) {
 		errDto = models.NewFullExceptionDto(
 			http.StatusBadRequest,
@@ -328,29 +340,52 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res = db.Model(&subscribeDb).Updates(&subscribeDto)
-	if res.Error != nil {
+	// update operation
+	err = repo.Update(uint(idInt), subscribeDb)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusNotFound,
+			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+			"",
+		)
+		errDto.Write(w)
+		return
+	} else if err != nil {
 		errDto = models.NewFullExceptionDto(
 			http.StatusInternalServerError,
 			fmt.Sprintf("Failed to update the subscribe with id = %d", idInt),
-			res.Error.Error(),
+			err.Error(),
 		)
 		errDto.Write(w)
 		return
 	}
 
+	// result
 	w.WriteHeader(http.StatusNoContent)
 	w.Header().Del("Content-Type")
 
 }
 
-func Delete(w http.ResponseWriter, r *http.Request) {
-
+func UpdatePut(w http.ResponseWriter, r *http.Request) {
 	var (
-		subscribeDto models.SubscribeDto
-		errDto       models.FullExceptionDto
+		//the subscribe from request
+		subscribeDto *models.SubscribeDto
+		//the error for response
+		errDto models.FullExceptionDto
 	)
 
+	// headers validate
+	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"The request body must be in JSON format",
+			"",
+		)
+		errDto.Write(w)
+		return
+	}
+
+	// query validate
 	idStr := r.PathValue("id")
 	idInt, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -363,30 +398,104 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := connectToDB(w)
-	if err != nil {
-		return
-	}
-
-	res := db.Delete(&subscribeDto, idInt)
-	if res.Error != nil {
+	// body unmarshal
+	d := json.NewDecoder(r.Body)
+	if err := d.Decode(&subscribeDto); err != nil {
 		errDto = models.NewFullExceptionDto(
-			http.StatusInternalServerError,
-			fmt.Sprintf("Failed to delete the subscribe with id = %d", idInt),
-			res.Error.Error(),
+			http.StatusBadRequest,
+			"Incorrect JSON body",
+			err.Error(),
 		)
 		errDto.Write(w)
 		return
-	} else if res.RowsAffected == 0 {
+	}
+
+	// fields validate
+	if err = subscribeDto.Validate(); err != nil {
 		errDto = models.NewFullExceptionDto(
-			http.StatusInternalServerError,
-			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+			http.StatusBadRequest,
+			err.Error(),
 			"",
 		)
 		errDto.Write(w)
 		return
 	}
 
+	repo, err := connectToDB(w)
+	if err != nil {
+		return
+	}
+
+	// update operation
+	err = repo.Update(uint(idInt), subscribeDto.ToDatabase())
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusNotFound,
+			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+			"",
+		)
+		errDto.Write(w)
+		return
+	} else if err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			fmt.Sprintf("Failed to update the subscribe with id = %d", idInt),
+			err.Error(),
+		)
+		errDto.Write(w)
+		return
+	}
+
+	// result
+	w.WriteHeader(http.StatusNoContent)
+	w.Header().Del("Content-Type")
+}
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+	var (
+		//the error for response
+		errDto models.FullExceptionDto
+	)
+
+	// query validate
+	idStr := r.PathValue("id")
+	idInt, err := strconv.Atoi(idStr)
+	if err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusBadRequest,
+			"Incorrect id in the URL path. Please specify a positive number",
+			err.Error(),
+		)
+		errDto.Write(w)
+		return
+	}
+
+	repo, err := connectToDB(w)
+	if err != nil {
+		return
+	}
+
+	// delete operation
+	err = repo.Delete(uint(idInt))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		errDto = models.NewFullExceptionDto(
+			http.StatusNotFound,
+			fmt.Sprintf("The subscribe with id = %d is not found", idInt),
+			"",
+		)
+		errDto.Write(w)
+		return
+	} else if err != nil {
+		errDto = models.NewFullExceptionDto(
+			http.StatusInternalServerError,
+			fmt.Sprintf("Failed to delete the subscribe with id = %d", idInt),
+			err.Error(),
+		)
+		errDto.Write(w)
+		return
+	}
+
+	// result
 	w.WriteHeader(http.StatusNoContent)
 	w.Header().Del("Content-Type")
 }
