@@ -53,7 +53,7 @@ func main() {
 	mux.HandleFunc("PUT /api/v1/subscribes/{id}", rest.UpdatePut)
 	mux.HandleFunc("PATCH /api/v1/subscribes/{id}", rest.UpdatePatch)
 	mux.HandleFunc("DELETE /api/v1/subscribes/{id}", rest.Delete)
-	mux.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		errDto := models.NewFullExceptionDto(
 			http.StatusNotFound,
 			fmt.Sprintf("The requested URL %s is not found", r.URL.Path),
